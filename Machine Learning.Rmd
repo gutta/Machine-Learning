@@ -1,0 +1,132 @@
+---
+title: "Machine Learning"
+output: html_document
+---
+#Executive Summary:
+
+We develop methodologies to classify activity quality of a person's exercise. We were provided with a large variable set (160 activity monitors) that was obtained for known activity qualities.
+
+In the first model, we train with only a small part of the provided training set (15%) (in addition to using only 53 variables, others were removed by exploration) to reduce computation time. We use the Random Forest method and the Caret package for modelling. 96% accuracy was achieved in out of sample data.  
+
+In the second model, Principal Component Analysis (PCA) was conducted on said above 15% (and 36 variables were used). The result turned out to not as good as the first model : 92% accuracy.
+
+
+#Data Processing and exploration
+
+The provided data was loaded 
+```{r}
+training<-read.csv("pml-training.csv")
+dim(training)
+testingFinal<-read.csv("pml-testing.csv") 
+dim(testingFinal)
+```
+The training set is large!
+
+On exploring the dataset we find that a lot of columns have very sparse data (more than 90% empty), imputing missing data is meaningless when data is sparse. Hence, we remove these columns. In addition the first 7 variables(eg. row numbers and names of subjects) appear to be not important. We remove them too.
+
+```{r}
+training<-training[,!is.na(training[1,])]
+training<-training[,training[1,]!=""]
+training<-training[,-(1:7)]
+```
+
+#Modelling
+
+##Data Partition
+We are now left with 53 variables. We divide the training set into 2 sets - one to train the model (training1) and another to test our model (testing1) (i.e., before going on the final 20 cases).
+
+The data in the training1 set would be enormous if we use, the usual, 70% of the available data. This will take relatively enormous computational time (our observation). We feel that it would be reasonable to hypothesize that the benefit of increasing training1 set beyond a certain limit does not yield appreciable gains. Hence we partition such that training1 has only 15% of the available data. 
+
+```{r}
+library(caret)
+set.seed(100)
+inTrain<-createDataPartition(y=training$classe,p=0.15,list=F)
+training1<-training[inTrain,]
+testing1<-training[-inTrain,]
+dim(training1)
+```
+
+##PCA Analysis
+We have nearly 3000 rows of data in the training1 set. To see if the 53 variable set can be further reduced we run a PCA analysis without the "classe" variable.
+
+```{r}
+l1<-preProcess(training1[,-53],method="pca",thresh=0.90) #capture 90% variance
+l1$numComp
+l2<-preProcess(training1[,-53],method="pca",thresh=0.95) #capture 95% variance
+l2$numComp
+l3<-preProcess(training1[,-53],method="pca",thresh=0.99) #capture 99% variance
+l3$numComp
+```
+
+To capture 99% variance we would need 35 variables. These number of variables are not a great reduction from the total number of variables. Therefore, we make run 2 models, one with results from PCA and one without.
+
+##Ramdom Forest
+We choose Random Forest method to model in our first try. If the obtained results are not satisfactory then we may have to explore different models. Note that we run this method in parallel.
+```{r}
+library(doParallel) # running in parallel (Windows)
+registerDoParallel(cores=4)# using 4 CPUs
+
+# 1st model: using all 53 variables
+set.seed(1000)
+modelFit1<-train(classe~.,data=training1,method="rf") # without PCA 
+# 2nd model: using 36 variables (35 from PCA and classe)
+training2<-predict(l3,training1[,-53])
+training2$classe<-training1[,53] # adding variable "classe"" to the data set
+set.seed(1001)
+modelFit2<-train(classe~.,data=training2,method="rf")
+```
+
+##Predcition,Crossvalidation and Error rate
+
+The prediction with out of sample data is carried out as shown below:
+```{r}
+# 1st model
+Pred1<-predict(modelFit1,testing1)
+
+# 2nd model
+testing2<-predict(l3,testing1[,-53])
+testing2$classe<-testing1[,53] # adding variable "classe"" to the data set
+Pred2<-predict(modelFit2,testing2)
+```
+
+The test outcome is validated against the out of sample data and the table is presented below.
+
+```{r}
+CVT1<-table(Pred1,testing1$classe)
+CVT1
+CVT2<-table(Pred2,testing2$classe)
+CVT2
+```
+
+The above table indicates that the predictions are fair for both models.  We compute the accuracy rate as follows : (number of correct predictions) / (total number of predictions) for model 1 and 2. 
+
+```{r}
+sum(diag(CVT1))/sum(CVT1)
+sum(diag(CVT2))/sum(CVT2)
+```
+For model 1 : out of sample accuracy was 96%, which implies an error rate of 4%. 
+For model 2 : out of sample accuracy was 92%, which implies an error rate of 8%.
+
+#Results and Discussion
+
+The trained model 1, is more accurate, and therefore used to predict the 20 test cases.
+
+```{r}
+answers<-predict(modelFit1,testingFinal)
+answers
+```
+
+Generation of the files for submission.
+
+```{r}
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+pml_write_files(answers)
+```
+
+We removed many variables by exploring the dataset in model 1. This model was further refined to model 2 by using PCA. However, model 1 seemed to be more accurate.   
